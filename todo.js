@@ -1,14 +1,24 @@
-let dueDate = new Date("2026-04-16T18:00:00Z");
+const COLLAPSE_THRESHOLD = 150;
 
+let dueDate = new Date("2026-04-16T18:00:00Z");
+let timerHandle = null;
+
+const card = document.getElementById("todo-card");
 const checkbox = document.getElementById("todo-complete");
 const titleEl = document.getElementById("todo-title");
 const descriptionEl = document.getElementById("todo-description");
 const priorityBadge = document.getElementById("todo-priority-badge");
 const priorityText = document.getElementById("todo-priority-text");
+const priorityIndicator = document.getElementById("todo-priority-indicator");
 const statusBadge = document.getElementById("todo-status-badge");
 const statusText = document.getElementById("todo-status-text");
+const statusControl = document.getElementById("todo-status-control");
 const dueDateEl = document.getElementById("todo-due-date");
 const timeRemainingEl = document.getElementById("todo-time-remaining");
+const overdueIndicator = document.getElementById("todo-overdue-indicator");
+const collapsibleSection = document.getElementById("todo-collapsible-section");
+const expandToggle = document.getElementById("todo-expand-toggle");
+const expandToggleText = expandToggle.querySelector(".expand-toggle-text");
 const btnEdit = document.getElementById("btn-edit");
 const btnDelete = document.getElementById("btn-delete");
 
@@ -16,62 +26,20 @@ const modal = document.getElementById("edit-modal");
 const editTitle = document.getElementById("edit-title");
 const editDescription = document.getElementById("edit-description");
 const editPriority = document.getElementById("edit-priority");
-const editStatus = document.getElementById("edit-status");
 const editDueDate = document.getElementById("edit-due-date");
 const titleError = document.getElementById("edit-title-error");
 const btnModalClose = document.getElementById("btn-modal-close");
 const btnModalCancel = document.getElementById("btn-modal-cancel");
 const btnModalSave = document.getElementById("btn-modal-save");
 
-function getTimeRemaining(now) {
-  const diff = dueDate - now;
-  const abs = Math.abs(diff);
-  const mins = Math.floor(abs / 60_000);
-  const hrs = Math.floor(abs / 3_600_000);
-  const days = Math.floor(abs / 86_400_000);
-
-  if (abs < 60_000) return { text: "Due now!", cls: "tr-now" };
-  if (diff < 0) {
-    if (mins < 60)
-      return {
-        text: `Overdue by ${mins} min${mins !== 1 ? "s" : ""}`,
-        cls: "tr-overdue",
-      };
-    if (hrs < 24)
-      return {
-        text: `Overdue by ${hrs} hr${hrs !== 1 ? "s" : ""}`,
-        cls: "tr-overdue",
-      };
-    return {
-      text: `Overdue by ${days} day${days !== 1 ? "s" : ""}`,
-      cls: "tr-overdue",
-    };
-  }
-  if (mins < 60)
-    return {
-      text: `Due in ${mins} min${mins !== 1 ? "s" : ""}`,
-      cls: "tr-soon",
-    };
-  if (hrs < 24)
-    return { text: `Due in ${hrs} hr${hrs !== 1 ? "s" : ""}`, cls: "tr-soon" };
-  if (days === 1) return { text: "Due tomorrow", cls: "tr-soon" };
-  if (days <= 6) return { text: `Due in ${days} days`, cls: "tr-soon" };
-  return { text: `Due in ${days} days`, cls: "tr-ok" };
-}
-
-function updateTimeRemaining() {
-  const { text, cls } = getTimeRemaining(new Date());
-  timeRemainingEl.textContent = text;
-  timeRemainingEl.className = "time-remaining " + cls;
-}
-
-updateTimeRemaining();
-setInterval(updateTimeRemaining, 60_000);
-
 const PRIORITY_MAP = {
-  high: { label: "High", cls: "badge-high" },
-  medium: { label: "Medium", cls: "badge-medium" },
-  low: { label: "Low", cls: "badge-low" },
+  high: { label: "High", cls: "badge-high", indicator: "priority-high" },
+  medium: {
+    label: "Medium",
+    cls: "badge-medium",
+    indicator: "priority-medium",
+  },
+  low: { label: "Low", cls: "badge-low", indicator: "priority-low" },
 };
 
 const STATUS_MAP = {
@@ -80,11 +48,87 @@ const STATUS_MAP = {
   done: { label: "Done", cls: "badge-done" },
 };
 
+function getTimeRemaining(now) {
+  const diff = dueDate - now;
+  const abs = Math.abs(diff);
+  const mins = Math.floor(abs / 60_000);
+  const hrs = Math.floor(abs / 3_600_000);
+  const days = Math.floor(abs / 86_400_000);
+
+  if (abs < 60_000) return { text: "Due now", cls: "tr-now", overdue: false };
+  if (diff < 0) {
+    if (mins < 60)
+      return {
+        text: `Overdue by ${mins} min${mins !== 1 ? "s" : ""}`,
+        cls: "tr-overdue",
+        overdue: true,
+      };
+    if (hrs < 24)
+      return {
+        text: `Overdue by ${hrs} hr${hrs !== 1 ? "s" : ""}`,
+        cls: "tr-overdue",
+        overdue: true,
+      };
+    return {
+      text: `Overdue by ${days} day${days !== 1 ? "s" : ""}`,
+      cls: "tr-overdue",
+      overdue: true,
+    };
+  }
+  if (mins < 60)
+    return {
+      text: `Due in ${mins} min${mins !== 1 ? "s" : ""}`,
+      cls: "tr-soon",
+      overdue: false,
+    };
+  if (hrs < 24)
+    return {
+      text: `Due in ${hrs} hr${hrs !== 1 ? "s" : ""}`,
+      cls: "tr-soon",
+      overdue: false,
+    };
+  if (days === 1)
+    return { text: "Due tomorrow", cls: "tr-soon", overdue: false };
+  if (days <= 6)
+    return { text: `Due in ${days} days`, cls: "tr-soon", overdue: false };
+  return { text: `Due in ${days} days`, cls: "tr-ok", overdue: false };
+}
+
+function updateTimeRemaining() {
+  const currentStatus = statusControl.value;
+
+  if (currentStatus === "done") {
+    timeRemainingEl.textContent = "Completed";
+    timeRemainingEl.className = "time-remaining tr-done";
+    overdueIndicator.hidden = true;
+    card.classList.remove("is-overdue");
+    return;
+  }
+
+  const { text, cls, overdue } = getTimeRemaining(new Date());
+  timeRemainingEl.textContent = text;
+  timeRemainingEl.className = "time-remaining " + cls;
+
+  overdueIndicator.hidden = !overdue;
+  card.classList.toggle("is-overdue", overdue);
+}
+
+function startTimer() {
+  if (timerHandle) return;
+  timerHandle = setInterval(updateTimeRemaining, 45_000);
+}
+
+function stopTimer() {
+  clearInterval(timerHandle);
+  timerHandle = null;
+}
+
 function applyPriorityBadge(value) {
-  const { label, cls } = PRIORITY_MAP[value];
+  const { label, cls, indicator } = PRIORITY_MAP[value];
   priorityBadge.className = `badge ${cls}`;
   priorityBadge.setAttribute("aria-label", `Priority: ${label}`);
   priorityText.textContent = label;
+  priorityIndicator.className = `priority-indicator ${indicator}`;
 }
 
 function applyStatusBadge(value) {
@@ -94,15 +138,58 @@ function applyStatusBadge(value) {
   statusText.textContent = label;
 }
 
+function setStatus(value) {
+  statusControl.value = value;
+
+  applyStatusBadge(value);
+
+  checkbox.checked = value === "done";
+
+  titleEl.classList.toggle("done", value === "done");
+
+  card.classList.toggle("is-done", value === "done");
+
+  if (value === "done") {
+    stopTimer();
+  } else {
+    startTimer();
+  }
+
+  updateTimeRemaining();
+}
+
+function initExpandCollapse() {
+  const text = descriptionEl.textContent.trim();
+
+  if (text.length <= COLLAPSE_THRESHOLD) {
+    collapsibleSection.classList.remove("is-collapsed");
+    expandToggle.hidden = true;
+    return;
+  }
+
+  collapsibleSection.classList.add("is-collapsed");
+  collapsibleSection.setAttribute("aria-expanded", "false");
+  expandToggle.hidden = false;
+  expandToggle.setAttribute("aria-expanded", "false");
+  expandToggleText.textContent = "Show more";
+}
+
+function toggleExpand() {
+  const isExpanded = expandToggle.getAttribute("aria-expanded") === "true";
+  const next = !isExpanded;
+
+  expandToggle.setAttribute("aria-expanded", String(next));
+  collapsibleSection.setAttribute("aria-expanded", String(next));
+  collapsibleSection.classList.toggle("is-collapsed", !next);
+  expandToggleText.textContent = next ? "Show less" : "Show more";
+}
+
 function formatDisplayDate(date) {
-  return (
-    "Due " +
-    date.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    })
-  );
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function toInputValue(date) {
@@ -121,22 +208,12 @@ function getCurrentPriorityValue() {
   );
 }
 
-function getCurrentStatusValue() {
-  const label = statusText.textContent.trim().toLowerCase();
-  return (
-    Object.keys(STATUS_MAP).find(
-      (k) => STATUS_MAP[k].label.toLowerCase() === label,
-    ) || "inprogress"
-  );
-}
-
 let previouslyFocused = null;
 
 function openModal() {
   editTitle.value = titleEl.textContent.trim();
   editDescription.value = descriptionEl.textContent.trim();
   editPriority.value = getCurrentPriorityValue();
-  editStatus.value = getCurrentStatusValue();
   editDueDate.value = toInputValue(dueDate);
 
   clearTitleError();
@@ -144,14 +221,12 @@ function openModal() {
   previouslyFocused = document.activeElement;
   modal.hidden = false;
   document.body.style.overflow = "hidden";
-
   editTitle.focus();
 }
 
 function closeModal() {
   modal.hidden = true;
   document.body.style.overflow = "";
-
   if (previouslyFocused) previouslyFocused.focus();
 }
 
@@ -173,7 +248,6 @@ function saveEdits() {
   const newTitle = editTitle.value.trim();
   const newDesc = editDescription.value.trim();
   const newPriority = editPriority.value;
-  const newStatus = editStatus.value;
   const newDateVal = editDueDate.value;
 
   if (!newTitle) {
@@ -185,18 +259,9 @@ function saveEdits() {
 
   titleEl.textContent = newTitle;
 
-  descriptionEl.textContent = newDesc || descriptionEl.textContent;
+  descriptionEl.textContent = newDesc;
 
   applyPriorityBadge(newPriority);
-
-  applyStatusBadge(newStatus);
-  if (newStatus === "done") {
-    titleEl.classList.add("done");
-    checkbox.checked = true;
-  } else {
-    titleEl.classList.remove("done");
-    checkbox.checked = false;
-  }
 
   if (newDateVal) {
     dueDate = new Date(newDateVal + "T18:00:00Z");
@@ -205,26 +270,38 @@ function saveEdits() {
     updateTimeRemaining();
   }
 
+  collapsibleSection.classList.remove("is-collapsed");
+  expandToggle.hidden = true;
+  initExpandCollapse();
+
   closeModal();
 }
 
 checkbox.addEventListener("change", function () {
-  if (this.checked) {
-    titleEl.classList.add("done");
-    applyStatusBadge("done");
-  } else {
-    titleEl.classList.remove("done");
-    applyStatusBadge("inprogress");
-  }
+  setStatus(this.checked ? "done" : "pending");
 });
+
+statusControl.addEventListener("change", function () {
+  setStatus(this.value);
+});
+
+expandToggle.addEventListener("click", toggleExpand);
+
+document
+  .getElementById("todo-edit-form")
+  .addEventListener("submit", function (e) {
+    e.preventDefault();
+    saveEdits();
+  });
+
+btnEdit.addEventListener("click", openModal);
 
 btnDelete.addEventListener("click", function () {
   if (confirm("Delete this task?")) {
-    document.querySelector('[data-testid="test-todo-card"]').remove();
+    card.remove();
   }
 });
 
-btnEdit.addEventListener("click", openModal);
 btnModalClose.addEventListener("click", closeModal);
 btnModalCancel.addEventListener("click", closeModal);
 btnModalSave.addEventListener("click", saveEdits);
@@ -238,7 +315,6 @@ modal.addEventListener("keydown", function (e) {
     closeModal();
     return;
   }
-
   if (
     e.key === "Enter" &&
     e.target.tagName !== "TEXTAREA" &&
@@ -252,16 +328,13 @@ modal.addEventListener("keydown", function (e) {
 
 modal.addEventListener("keydown", function (e) {
   if (e.key !== "Tab" || modal.hidden) return;
-
   const focusable = Array.from(
     modal.querySelectorAll(
       'button, input, textarea, select, [tabindex]:not([tabindex="-1"])',
     ),
   ).filter((el) => !el.disabled);
-
   const first = focusable[0];
   const last = focusable[focusable.length - 1];
-
   if (e.shiftKey) {
     if (document.activeElement === first) {
       e.preventDefault();
@@ -274,3 +347,10 @@ modal.addEventListener("keydown", function (e) {
     }
   }
 });
+
+applyPriorityBadge("high");
+applyStatusBadge("inprogress");
+priorityIndicator.className = "priority-indicator priority-high";
+initExpandCollapse();
+updateTimeRemaining();
+startTimer();
